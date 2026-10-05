@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>レシピっクマ 🐻</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 1.5rem auto; padding: 0 1rem; line-height: 1.6; }
+    h1 { font-size: 1.5rem; }
+    .row { display: flex; gap: 0.5rem; margin: 0.5rem 0 1rem; align-items: center; flex-wrap: wrap; }
+    input[type="text"] { flex: 1; padding: 0.5rem; font-size: 1rem; }
+    button { padding: 0.5rem 1rem; font-size: 1rem; cursor: pointer; }
+    button:disabled { opacity: 0.5; cursor: default; }
+    label { font-size: 0.9rem; }
+    #status { margin: 1rem 0; color: #555; }
+    #error { margin: 1rem 0; color: #c0392b; white-space: pre-wrap; }
+
+    #player-mount iframe { border: 0; border-radius: 8px; display: block; }
+    .step { display: flex; gap: 0.75rem; align-items: flex-start; }
+    .thumb { width: 110px; border-radius: 4px; flex-shrink: 0; }
+    .step-body { flex: 1; }
+    .ts-btn { font-size: 0.8rem; padding: 0.1rem 0.5rem; margin-left: 0.3rem; cursor: pointer; white-space: nowrap; }
+    #rendered ol li, #rendered ul li { margin-bottom: 0.6rem; }
+    textarea { width: 100%; height: 320px; font-family: monospace; font-size: 0.9rem; padding: 0.5rem; box-sizing: border-box; }
+    #mode-btn, #back-btn { padding: 0.2rem 0.6rem; }
+
+    /* === スマホ: 動画を背面固定、レシピを下から被せるシート === */
+    #player-col { position: fixed; top: 0; left: 0; right: 0; height: 40vh; z-index: 10;
+      background: #000; display: flex; justify-content: center; align-items: center; transition: height .2s; }
+    #player-mount iframe { height: 38vh; width: calc(38vh * 9 / 16); max-width: 100%; }
+    #recipe-col { position: fixed; left: 0; right: 0; bottom: 0; top: 33vh; z-index: 11;
+      background: #fff; border-radius: 16px 16px 0 0; box-shadow: 0 -4px 16px rgba(0,0,0,.15);
+      overflow-y: auto; padding: 0.6rem 1rem 2rem; transition: top .2s; }
+
+    /* 動画全画面モード: 動画いっぱい・レシピは下に小さく */
+    #result.video-mode #player-col { height: 100vh; }
+    #result.video-mode #player-mount iframe { height: 90vh; width: calc(90vh * 9 / 16); }
+    #result.video-mode #recipe-col { top: 86vh; }
+
+    /* 動画が無い/Markdown表示: シートを全画面に */
+    #result.no-video #recipe-col { top: 0; border-radius: 0; box-shadow: none; }
+
+    /* === PC(幅700px以上): 左に動画・右にレシピの2カラム === */
+    @media (min-width: 700px) {
+      #result { display: flex; flex-direction: row; align-items: flex-start; gap: 1.25rem; }
+      #player-col, #result.video-mode #player-col { position: sticky; top: 1rem; flex: 0 0 auto;
+        height: auto; z-index: auto; background: transparent; display: block; }
+      #recipe-col, #result.video-mode #recipe-col, #result.no-video #recipe-col {
+        position: static; flex: 1; min-width: 0; top: auto; background: transparent;
+        border-radius: 0; box-shadow: none; overflow: visible; padding: 0; }
+      #player-mount iframe, #result.video-mode #player-mount iframe { height: 460px; width: 259px; }
+      #mode-btn, #back-btn { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <h1>レシピっクマ 🐻</h1>
+  <p>YouTubeショート動画のURLを渡すと、レシピにまとめます。</p>
+
+  <div class="row">
+    <input type="text" id="url" placeholder="https://www.youtube.com/shorts/..." />
+    <button id="run">解析</button>
+  </div>
+
+  <div id="status"></div>
+  <div id="error"></div>
+
+  <div id="result" hidden>
+    <div id="player-col" hidden><div id="player-mount"></div></div>
+    <div id="recipe-col">
+      <div class="row">
+        <button id="mode-btn">🎬 動画を大きく</button>
+        <strong style="flex:1;">レシピ</strong>
+        <label><input type="radio" name="fmt" value="html" checked /> HTML</label>
+        <label><input type="radio" name="fmt" value="markdown" /> Markdown</label>
+        <button id="copy">コピー</button>
+        <button id="back-btn" title="閉じる">✕</button>
+      </div>
+      <div id="rendered"></div>
+      <textarea id="markdown" readonly hidden></textarea>
+    </div>
+  </div>
+
+  <script>
+    const STATE_LABEL = {
+      queued: "待機中…", downloading: "ダウンロード中…", transcribing: "文字起こし中…",
+      extracting_frames: "解析中…", analyzing: "解析中…",
+    };
+
+    const urlInput = document.getElementById("url");
+    const runBtn = document.getElementById("run");
+    const statusEl = document.getElementById("status");
+    const errorEl = document.getElementById("error");
+    const resultEl = document.getElementById("result");
+    const renderedEl = document.getElementById("rendered");
+    const markdownEl = document.getElementById("markdown");
+    const copyBtn = document.getElementById("copy");
+    const backBtn = document.getElementById("back-btn");
+    const modeBtn = document.getElementById("mode-btn");
+    const playerCol = document.getElementById("player-col");
+    const playerMount = document.getElementById("player-mount");
+
+    let pollTimer = null;
+    let result = { markdown: "", html: "", video_id: null };
+
+    // --- YouTube IFrame Player ---
+    let ytApiReady = false, ytPlayer = null, currentVideoId = null;
+    window.onYouTubeIframeAPIReady = () => { ytApiReady = true; createPlayer(); };
+    function createPlayer() {
+      if (!ytApiReady || !currentVideoId || ytPlayer) return;
+      ytPlayer = new YT.Player("yt-player", { videoId: currentVideoId, playerVars: { playsinline: 1 } });
+    }
+    function resetPlayer() {
+      if (ytPlayer) { try { ytPlayer.destroy(); } catch (e) {} ytPlayer = null; }
+      playerMount.innerHTML = '<div id="yt-player"></div>';
+    }
+    function seekTo(seconds) {
+      if (ytPlayer && ytPlayer.seekTo) { ytPlayer.seekTo(seconds, true); if (ytPlayer.playVideo) ytPlayer.playVideo(); }
+      else if (currentVideoId) { window.open(`https://youtu.be/${currentVideoId}?t=${seconds}s`, "_blank"); }
+      resultEl.classList.remove("video-mode"); // 手順を押したらレシピ主体に戻す
+      setModeLabel();
+    }
+    function wireTimestamps() {
+      renderedEl.querySelectorAll(".ts-btn").forEach((b) => {
+        b.onclick = () => seekTo(parseInt(b.dataset.seconds, 10));
+      });
+    }
+    function setModeLabel() {
+      modeBtn.textContent = resultEl.classList.contains("video-mode") ? "📖 レシピを大きく" : "🎬 動画を大きく";
+    }
+
+    runBtn.addEventListener("click", start);
+    copyBtn.addEventListener("click", copy);
+    modeBtn.addEventListener("click", () => { resultEl.classList.toggle("video-mode"); setModeLabel(); });
+    backBtn.addEventListener("click", () => {
+      resultEl.hidden = true;
+      if (ytPlayer && ytPlayer.pauseVideo) ytPlayer.pauseVideo();
+      window.scrollTo(0, 0);
+    });
+    document.querySelectorAll('input[name="fmt"]').forEach((el) => el.addEventListener("change", updateView));
+
+    function currentFormat() { return document.querySelector('input[name="fmt"]:checked').value; }
+
+    function updateView() {
+      const showVideo = currentFormat() === "html" && !!currentVideoId;
+      if (currentFormat() === "html") {
+        renderedEl.innerHTML = result.html; renderedEl.hidden = false; markdownEl.hidden = true;
+        wireTimestamps();
+      } else {
+        markdownEl.value = result.markdown; markdownEl.hidden = false; renderedEl.hidden = true;
+      }
+      playerCol.hidden = !showVideo;
+      resultEl.classList.toggle("no-video", !showVideo);
+      if (!showVideo) resultEl.classList.remove("video-mode");
+      modeBtn.hidden = !showVideo;
+      setModeLabel();
+    }
+
+    async function copy() {
+      try {
+        if (currentFormat() === "html") {
+          if (window.ClipboardItem && navigator.clipboard.write) {
+            await navigator.clipboard.write([new ClipboardItem({
+              "text/html": new Blob([result.html], { type: "text/html" }),
+              "text/plain": new Blob([result.markdown], { type: "text/plain" }),
+            })]);
+          } else { await navigator.clipboard.writeText(result.html); }
+        } else { await navigator.clipboard.writeText(result.markdown); }
+        copyBtn.textContent = "コピーしました!"; setTimeout(() => (copyBtn.textContent = "コピー"), 1500);
+      } catch (e) { copyBtn.textContent = "コピー失敗"; setTimeout(() => (copyBtn.textContent = "コピー"), 1500); }
+    }
+
+    async function start() {
+      const url = urlInput.value.trim();
+      if (!url) return;
+      resetUI(); runBtn.disabled = true;
+      try {
+        const res = await fetch("/api/jobs", {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url }),
+        });
+        if (!res.ok) throw new Error((await res.json()).detail || "リクエストに失敗しました");
+        const { job_id } = await res.json();
+        poll(job_id);
+      } catch (e) { showError(e.message); runBtn.disabled = false; }
+    }
+
+    function poll(jobId) {
+      pollTimer = setInterval(async () => {
+        try {
+          const res = await fetch(`/api/jobs/${jobId}`);
+          const { state, error_message } = await res.json();
+          if (state === "error") { stopPoll(); showError(error_message || "エラーが発生しました"); runBtn.disabled = false; }
+          else if (state === "done") { stopPoll(); await showResult(jobId); runBtn.disabled = false; }
+          else { statusEl.textContent = STATE_LABEL[state] || "処理中…"; }
+        } catch (e) { stopPoll(); showError("通信に失敗しました"); runBtn.disabled = false; }
+      }, 2000);
+    }
+
+    async function showResult(jobId) {
+      statusEl.textContent = "完了!";
+      const res = await fetch(`/api/jobs/${jobId}/result`);
+      const data = await res.json();
+      result = { markdown: data.markdown || "", html: data.html || "", video_id: data.video_id || null };
+      currentVideoId = result.video_id;
+      resultEl.classList.remove("video-mode"); // 既定はレシピ主体
+      resetPlayer();
+      if (currentVideoId) createPlayer();
+      updateView();
+      resultEl.hidden = false;
+    }
+
+    function showError(msg) { errorEl.textContent = msg; statusEl.textContent = ""; }
+    function resetUI() {
+      stopPoll(); statusEl.textContent = ""; errorEl.textContent = "";
+      resultEl.hidden = true; renderedEl.innerHTML = ""; markdownEl.value = ""; playerCol.hidden = true;
+    }
+    function stopPoll() { if (pollTimer) clearInterval(pollTimer); pollTimer = null; }
+  </script>
+  <script src="https://www.youtube.com/iframe_api"></script>
+</body>
+</html>

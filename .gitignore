@@ -1,0 +1,20 @@
+# secrets
+.env
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+
+# whisper model cache / 一時ファイル
+.cache/
+models/
+tmp/
+*.mp4
+*.m4a
+*.wav
+
+# ローカルキャッシュ(SQLite)
+data/
+*.sqlite3

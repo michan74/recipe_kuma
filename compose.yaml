@@ -1,0 +1,21 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    # .env から GEMINI_API_KEY などを渡す
+    env_file:
+      - .env
+    volumes:
+      # Whisperモデルのキャッシュを永続化（初回DLを繰り返さない）
+      - whisper-cache:/root/.cache/huggingface
+      # ソースをバインドマウント（コード変更を即反映・リビルド不要）
+      - ./app:/app/app
+      - ./web:/app/web
+      # キャッシュ(SQLite)とデバッグ出力(フレーム/入力テキスト)をホストから見えるように
+      - ./data:/app/data
+    # コード変更を自動リロード
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+volumes:
+  whisper-cache:
