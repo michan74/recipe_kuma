@@ -7,8 +7,8 @@
 テーマ=Agentic/使える。審査軸=①新規性・有効性 ②自律性・可観測性・セキュリティ ③実装品質・拡張性・費用対効果。
 適格性: Cloud Run + Gemini API で要件クリア（Vertex移行不要）。
 
-- [ ] **Cloud Runにデプロイ**して動くURL確保（必須提出物）。yt-dlpのIP問題もここで判明。
-- [ ] **Secret Manager** でAPIキー管理（セキュリティ加点・.env直書きをやめる）
+- [x] **Cloud Runにデプロイ**して動くURL確保（必須提出物）→ デプロイ済みだが YouTube ダウンロードがbot判定で失敗（2026-10-05）
+- [x] **Secret Manager** でAPIキー管理（セキュリティ加点・.env直書きをやめる）
 - [ ] **LINEインターフェース**（SNS動画→シェア→LINE→レシピ返却。差別化・デモ映え・Cloud Run webhook）
 - [ ] **エージェント性の明確化**: 2パスを主役に。clarifyを「批評ステップ」として分離も検討（②加点＋精度）
 - [ ] **可観測性**: Cloud Logging / Trace。エージェントの判断（clarifyの理由）を見せる
@@ -45,7 +45,7 @@
 
 ## 要検証
 
-- [ ] **yt-dlp がGCPのデータセンターIPからYouTubeを落とせるか**（ブロックされやすい。対策: cookie / プロキシ）← デプロイ直後に最優先で確認
+- [x] **yt-dlp がGCPのデータセンターIPからYouTubeを落とせるか** → **落とせない**（bot判定）。対策候補は `docs/daily/2026-10-05.md` 参照（cookie / 住宅用プロキシ）
 - [ ] google-genai の `response_schema`（dict形式）の実挙動（崩れる場合はpydantic/Schema型に変更）
 - [ ] レシピ抽出精度（フレーム枚数・しきい値・プロンプト・モデル）を実動画で調整
 
