@@ -18,3 +18,7 @@ tmp/
 # ローカルキャッシュ(SQLite)
 data/
 *.sqlite3
+
+# アーカイブ(ツールのインストーラ等)
+*.tar.gz
+*.zip
